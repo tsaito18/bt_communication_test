@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from bumble.att import Attribute
+from bumble.core import AdvertisingData
 from bumble.device import Device
 from bumble.gatt import Characteristic, Service
 from bumble.hci import Address
@@ -26,8 +27,9 @@ async def main():
 
         # Device の初期化
         # transport そのものではなく、source と sink を渡すのが最新の作法です
+        target_name = "ほうじちゃ"
         device = Device.with_hci(
-            "MyBumbleBLE",  # デバイス名
+            target_name,  # デバイス名
             Address("F0:F1:F2:F3:F4:F5"),  # MACアドレス
             hci_transport.source,  # 受信ストリーム
             hci_transport.sink,  # 送信ストリーム
@@ -70,7 +72,17 @@ async def main():
 
         print(f"=== サーバー起動: {device.name}")
         await device.power_on()
-        await device.start_advertising(auto_restart=True)
+
+        # アドバタイズデータ（スキャンした時に見える情報）を明示的に作成
+        # 0x09 = Complete Local Name
+        advertising_data = AdvertisingData(
+            [(AdvertisingData.COMPLETE_LOCAL_NAME, bytes(target_name, "utf-8"))]
+        )
+
+        # アドバタイズデータ（スキャンした時に見える情報）を明示的に作成
+        await device.start_advertising(
+            advertising_data=bytes(advertising_data), auto_restart=True
+        )
 
         print("=== アドバタイズ中... ブラウザから接続してください")
 

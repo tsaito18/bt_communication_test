@@ -20,8 +20,8 @@
         async function connect() {
             try {
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    // filters: [{ name: 'MyBumbleBLE' }],
+                    // acceptAllDevices: true,
+                    filters: [{ name: 'ほうじちゃ' }],
                     optionalServices: [SERVICE_UUID]
                 });
                 const server = await device.gatt.connect();
