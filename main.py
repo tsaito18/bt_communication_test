@@ -5,7 +5,7 @@ import random
 from bumble.att import Attribute
 from bumble.core import AdvertisingData
 from bumble.device import Device
-from bumble.gatt import Characteristic, Service
+from bumble.gatt import Characteristic, CharacteristicValue, Service
 from bumble.hci import Address
 from bumble.transport import open_transport
 
@@ -48,14 +48,13 @@ async def main():
 
         # --- GATT テーブル（サービスとキャラクタリスティック）の作成 ---
 
-        # RX用のカスタムキャラクタリスティッククラス（書き込みを受信）
-        class RxCharacteristic(Characteristic):
-            def on_write(self, connection, value):
-                try:
-                    text = value.decode("utf-8")
-                    print(f"=== [受信] ブラウザからの書き込み: {text}")
-                except:
-                    print(f"=== [受信] バイナリデータ: {value.hex()}")
+        # RX用の書き込みハンドラ（ブラウザからの書き込みを受信）
+        def on_rx_write(connection, value):
+            try:
+                text = value.decode("utf-8")
+                print(f"=== [受信] ブラウザからの書き込み: {text}")
+            except:
+                print(f"=== [受信] バイナリデータ: {value.hex()}")
 
         # キャラクタリスティックの定義（TX: 送信専用 / RX: 受信専用）
         tx_char = Characteristic(
@@ -67,14 +66,14 @@ async def main():
             value=b"Hello from Bumble!",
         )
 
-        rx_char = RxCharacteristic(
+        rx_char = Characteristic(
             RX_CHARACTERISTIC_UUID,
             properties=(
                 Characteristic.Properties.WRITE
                 | Characteristic.Properties.WRITE_WITHOUT_RESPONSE
             ),
             permissions=(Attribute.Permissions.WRITEABLE),
-            value=b"",
+            value=CharacteristicValue(write=on_rx_write),
         )
 
         # サービスの定義
