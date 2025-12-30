@@ -33,15 +33,15 @@
                 txCharCache = await service.getCharacteristic(TX_CHARACTERISTIC_UUID);
                 rxCharCache = await service.getCharacteristic(RX_CHARACTERISTIC_UUID);
 
-                rxCharCache.addEventListener('characteristicvaluechanged',
-                    (event) => {
-                        const value = event.target.value;
-                        const decoder = new TextDecoder('utf-8');
-                        const str = decoder.decode(value);
-
-                        const log = document.getElementById('log');
-                        log.value += str + "\n";
-                    });
+                await rxCharCache.startNotifications();
+                rxCharCache.addEventListener('characteristicvaluechanged', (event) => {
+                    const decoder = new TextDecoder('utf-8');
+                    const message = decoder.decode(event.target.value);
+                    const log = document.getElementById('log');
+                    log.value += '[受信] ' + message + '\n';
+                    log.scrollTop = log.scrollHeight;
+                    console.log('受信:', message);
+                });
 
                 document.getElementById('status').innerText = "接続完了";
             } catch (e) {

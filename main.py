@@ -83,6 +83,44 @@ async def main():
         # デバイスにサービスを追加
         device.add_service(service_element)
 
+        # --- メッセージ送信タスク管理 ---
+        send_task = None
+
+        async def send_messages_periodically():
+            """1秒ごとにメッセージを送信"""
+            message_counter = 0
+            try:
+                while True:
+                    message_counter += 1
+                    message = f"Message #{message_counter} from Bumble".encode("utf-8")
+                    tx_char.value = message
+                    await device.notify_subscribers(tx_char)
+                    print(f"=== [送信] {message.decode('utf-8')}")
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                print("=== メッセージ送信を停止しました")
+                raise
+
+        def on_connection(connection):
+            """接続時のコールバック"""
+            nonlocal send_task
+            print(f"=== クライアント接続: {connection}")
+            # メッセージ送信タスクを開始
+            send_task = asyncio.create_task(send_messages_periodically())
+
+        def on_disconnection(connection):
+            """切断時のコールバック"""
+            nonlocal send_task
+            print(f"=== クライアント切断: {connection}")
+            # メッセージ送信タスクをキャンセル
+            if send_task and not send_task.done():
+                send_task.cancel()
+            send_task = None
+
+        # イベントハンドラーを登録
+        device.on("connection", on_connection)
+        device.on("disconnection", on_disconnection)
+
         # --- サーバー起動 ---
 
         print(f"=== サーバー起動: {device.name}")
