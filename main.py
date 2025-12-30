@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 
 from bumble.att import Attribute
 from bumble.core import AdvertisingData
@@ -12,8 +13,9 @@ from bumble.transport import open_transport
 logging.basicConfig(level=logging.INFO)
 
 # UUID定義（ブラウザ側と合わせる）
-SERVICE_UUID = "A07498CA-AD5B-474E-940D-16F1FBE7E8CD"
-CHARACTERISTIC_UUID = "51FF12BB-3ED8-46E5-B4F9-D64E2FEC021B"
+SERVICE_UUID = "845d1d9a-b986-45b8-8b0e-21ee94307983"
+TX_CHARACTERISTIC_UUID = "3ecd3272-0f80-4518-ad58-78aa9af3ec9d"
+RX_CHARACTERISTIC_UUID = "47153006-9eef-45e5-afb7-038ea60ad893"
 
 
 async def main():
@@ -27,43 +29,56 @@ async def main():
 
         # Device の初期化
         # transport そのものではなく、source と sink を渡すのが最新の作法です
-        target_name = "ほうじちゃ"
+        target_name = f"ほうじちゃ_{random.randint(0, 9999):04d}"
+
+        # BLEの静的ランダムアドレスを生成（先頭バイトの上位2ビット=11）
+        def make_static_random_address():
+            bytes_ = bytearray(random.getrandbits(8) for _ in range(6))
+            bytes_[0] = (bytes_[0] & 0x3F) | 0xC0
+            return ":".join(f"{b:02X}" for b in bytes_)
+
+        rand_addr = make_static_random_address()
+        print(f"=== 使用アドレス(Static Random): {rand_addr}")
         device = Device.with_hci(
             target_name,  # デバイス名
-            Address("F0:F1:F2:F3:F4:F5"),  # MACアドレス
+            Address(rand_addr),  # 静的ランダム MACアドレス
             hci_transport.source,  # 受信ストリーム
             hci_transport.sink,  # 送信ストリーム
         )
 
         # --- GATT テーブル（サービスとキャラクタリスティック）の作成 ---
 
-        # 書き込み時のコールバック関数
-        def on_write(connection, value):
-            try:
-                text = value.decode("utf-8")
-                print(f"=== [受信] ブラウザからの書き込み: {text}")
-            except:
-                print(f"=== [受信] バイナリデータ: {value.hex()}")
+        # RX用のカスタムキャラクタリスティッククラス（書き込みを受信）
+        class RxCharacteristic(Characteristic):
+            def on_write(self, connection, value):
+                try:
+                    text = value.decode("utf-8")
+                    print(f"=== [受信] ブラウザからの書き込み: {text}")
+                except:
+                    print(f"=== [受信] バイナリデータ: {value.hex()}")
 
-        # キャラクタリスティックの定義
-        char_element = Characteristic(
-            CHARACTERISTIC_UUID,
+        # キャラクタリスティックの定義（TX: 送信専用 / RX: 受信専用）
+        tx_char = Characteristic(
+            TX_CHARACTERISTIC_UUID,
             properties=(
-                Characteristic.Properties.READ
-                | Characteristic.Properties.WRITE
-                | Characteristic.Properties.NOTIFY
+                Characteristic.Properties.READ | Characteristic.Properties.NOTIFY
             ),
-            permissions=(
-                Attribute.Permissions.READABLE | Attribute.Permissions.WRITEABLE
-            ),
+            permissions=(Attribute.Permissions.READABLE),
             value=b"Hello from Bumble!",
         )
 
-        # 書き込みイベントのハンドラを登録
-        char_element.on("write", on_write)
+        rx_char = RxCharacteristic(
+            RX_CHARACTERISTIC_UUID,
+            properties=(
+                Characteristic.Properties.WRITE
+                | Characteristic.Properties.WRITE_WITHOUT_RESPONSE
+            ),
+            permissions=(Attribute.Permissions.WRITEABLE),
+            value=b"",
+        )
 
         # サービスの定義
-        service_element = Service(SERVICE_UUID, [char_element])
+        service_element = Service(SERVICE_UUID, [tx_char, rx_char])
 
         # デバイスにサービスを追加
         device.add_service(service_element)

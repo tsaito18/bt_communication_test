@@ -1,32 +1,48 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
-    <title>Python BLE Client</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>bt_communication_test</title>
 </head>
+
 <body>
-    <h2>Python BLEと通信 (Bumble版)</h2>
+    <h2>bt_communication_test</h2>
     <button id="btnConnect">接続する</button>
-    <button id="btnRead">読み取る</button>
     <button id="btnWrite">書き込む</button>
     <div id="status">未接続</div>
+    <textarea id="log" cols="60" rows="10" readonly></textarea>
 
     <script>
-        const SERVICE_UUID = "a07498ca-ad5b-474e-940d-16f1fbe7e8cd";
-        const CHARACTERISTIC_UUID = "51ff12bb-3ed8-46e5-b4f9-d64e2fec021b";
+        const SERVICE_UUID = "845d1d9a-b986-45b8-8b0e-21ee94307983"
+        const TX_CHARACTERISTIC_UUID = "3ecd3272-0f80-4518-ad58-78aa9af3ec9d"
+        const RX_CHARACTERISTIC_UUID = "47153006-9eef-45e5-afb7-038ea60ad893"
         let deviceCache = null;
-        let characteristicCache = null;
+        let txCharCache = null;
+        let rxCharCache = null;
 
         async function connect() {
             try {
                 const device = await navigator.bluetooth.requestDevice({
-                    // acceptAllDevices: true,
-                    filters: [{ name: 'ほうじちゃ' }],
+                    filters: [{ namePrefix: 'ほうじちゃ_' }],
                     optionalServices: [SERVICE_UUID]
                 });
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(SERVICE_UUID);
-                characteristicCache = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                txCharCache = await service.getCharacteristic(TX_CHARACTERISTIC_UUID);
+                rxCharCache = await service.getCharacteristic(RX_CHARACTERISTIC_UUID);
+
+                rxCharCache.addEventListener('characteristicvaluechanged',
+                    (event) => {
+                        const value = event.target.value;
+                        const decoder = new TextDecoder('utf-8');
+                        const str = decoder.decode(value);
+
+                        const log = document.getElementById('log');
+                        log.value += str + "\n";
+                    });
+
                 document.getElementById('status').innerText = "接続完了";
             } catch (e) {
                 console.error(e);
@@ -34,23 +50,16 @@
             }
         }
 
-        async function readValue() {
-            if (!characteristicCache) return;
-            const value = await characteristicCache.readValue();
-            const decoder = new TextDecoder('utf-8');
-            alert("受信: " + decoder.decode(value));
-        }
-
         async function writeValue() {
-            if (!characteristicCache) return;
+            if (!txCharCache) return;
             const encoder = new TextEncoder('utf-8');
-            await characteristicCache.writeValue(encoder.encode("Hello Python " + Date.now()));
+            await txCharCache.writeValueWithoutResponse(encoder.encode("Hello Python " + Date.now()));
             console.log("書き込み完了");
         }
 
         document.getElementById('btnConnect').onclick = connect;
-        document.getElementById('btnRead').onclick = readValue;
         document.getElementById('btnWrite').onclick = writeValue;
     </script>
 </body>
+
 </html>
