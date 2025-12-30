@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import math
 import random
 
 from bumble.att import Attribute
@@ -9,54 +11,50 @@ from bumble.gatt import Characteristic, CharacteristicValue, Service
 from bumble.hci import Address
 from bumble.transport import open_transport
 
-# ログ設定
 logging.basicConfig(level=logging.INFO)
 
-# UUID定義（ブラウザ側と合わせる）
 SERVICE_UUID = "845d1d9a-b986-45b8-8b0e-21ee94307983"
 TX_CHARACTERISTIC_UUID = "3ecd3272-0f80-4518-ad58-78aa9af3ec9d"
 RX_CHARACTERISTIC_UUID = "47153006-9eef-45e5-afb7-038ea60ad893"
 
 
 async def main():
-    print("Bumble BLE Server を起動します...")
+    print("Starting BLE GATT Server...")
     print("<<< connecting to HCI...")
 
-    # 公式サンプルに従い、Context Manager を使用して Transport を開く
-    # "usb:0" は最初のUSBドングルを使用
+    # "usb:0" means "the first USB Bluetooth adapter"
     async with await open_transport("usb:0") as hci_transport:
         print("<<< connected")
 
-        # Device の初期化
-        # transport そのものではなく、source と sink を渡すのが最新の作法です
-        target_name = f"ほうじちゃ_{random.randint(0, 9999):04d}"
+        # Generate a random device name
+        target_name = f"Hojicha_{random.randint(0, 9999):04d}"
 
-        # BLEの静的ランダムアドレスを生成（先頭バイトの上位2ビット=11）
+        # Generate a static random address
         def make_static_random_address():
             bytes_ = bytearray(random.getrandbits(8) for _ in range(6))
             bytes_[0] = (bytes_[0] & 0x3F) | 0xC0
             return ":".join(f"{b:02X}" for b in bytes_)
 
         rand_addr = make_static_random_address()
-        print(f"=== 使用アドレス(Static Random): {rand_addr}")
+        print(f"=== Using address: {rand_addr}")
         device = Device.with_hci(
-            target_name,  # デバイス名
-            Address(rand_addr),  # 静的ランダム MACアドレス
-            hci_transport.source,  # 受信ストリーム
-            hci_transport.sink,  # 送信ストリーム
+            target_name,
+            Address(rand_addr),
+            hci_transport.source,  # receive stream
+            hci_transport.sink,  # transmit stream
         )
 
-        # --- GATT テーブル（サービスとキャラクタリスティック）の作成 ---
+        # Create GATT table (services and characteristics)
 
-        # RX用の書き込みハンドラ（ブラウザからの書き込みを受信）
+        # RX write handler (receive writes from browser)
         def on_rx_write(connection, value):
             try:
                 text = value.decode("utf-8")
-                print(f"=== [受信] ブラウザからの書き込み: {text}")
+                print(f"=== [Received] Write from browser: {text}")
             except:
-                print(f"=== [受信] バイナリデータ: {value.hex()}")
+                print(f"=== [Received] Binary data: {value.hex()}")
 
-        # キャラクタリスティックの定義（TX: 送信専用 / RX: 受信専用）
+        # Define characteristics
         tx_char = Characteristic(
             TX_CHARACTERISTIC_UUID,
             properties=(
@@ -76,69 +74,130 @@ async def main():
             value=CharacteristicValue(write=on_rx_write),
         )
 
-        # サービスの定義
+        # Define service
         service_element = Service(SERVICE_UUID, [tx_char, rx_char])
-
-        # デバイスにサービスを追加
         device.add_service(service_element)
 
-        # --- メッセージ送信タスク管理 ---
+        # Manage message sending task
         send_task = None
 
         async def send_messages_periodically():
-            """1秒ごとにメッセージを送信"""
+            """Send robot position data every 100ms"""
+            # Define waypoints for smooth path
+            waypoints = [
+                (388, 388),
+                (388, 6500),
+                (1100, 6500),
+                (1100, 1400),
+                (1900, 1400),
+                (1900, 6500),
+                (2500, 6500),
+                (2500, 388),
+                (388, 388),
+            ]
+
+            # Calculate total distance for interpolation
+            def distance(p1, p2):
+                return math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
+
+            def interpolate_path(waypoints, progress):
+                """Interpolate position along waypoints. progress: 0.0 to 1.0"""
+                # Calculate cumulative distances
+                distances = [0.0]
+                for i in range(len(waypoints) - 1):
+                    distances.append(
+                        distances[-1] + distance(waypoints[i], waypoints[i + 1])
+                    )
+
+                total_distance = distances[-1]
+                target_distance = progress * total_distance
+
+                # Find current segment
+                for i in range(len(distances) - 1):
+                    if distances[i] <= target_distance <= distances[i + 1]:
+                        segment_progress = (
+                            (target_distance - distances[i])
+                            / (distances[i + 1] - distances[i])
+                            if distances[i + 1] != distances[i]
+                            else 0
+                        )
+                        p1 = waypoints[i]
+                        p2 = waypoints[i + 1]
+                        x = p1[0] + segment_progress * (p2[0] - p1[0])
+                        y = p1[1] + segment_progress * (p2[1] - p1[1])
+                        return x, y
+
+                return waypoints[-1]
+
             message_counter = 0
             try:
                 while True:
                     message_counter += 1
-                    message = f"Message #{message_counter} from Bumble".encode("utf-8")
+
+                    # Calculate position along the path (cycles every 20 seconds)
+                    # 100ms per message, so 200 messages per cycle
+                    progress = (message_counter % 200) / 200.0
+                    x, y = interpolate_path(waypoints, progress)
+
+                    # Calculate angle (oscillates between -15 and +15 degrees)
+                    # Complete oscillation every 40 messages
+                    angle = 15 * math.sin(2 * math.pi * message_counter / 40)
+
+                    # Create JSON message
+                    data = {
+                        "type": "robot_pos",
+                        "x": round(x, 2),
+                        "y": round(y, 2),
+                        "angle": round(angle, 2),
+                    }
+                    message = json.dumps(data).encode("utf-8")
                     tx_char.value = message
                     await device.notify_subscribers(tx_char)
-                    print(f"=== [送信] {message.decode('utf-8')}")
-                    await asyncio.sleep(1)
+                    print(f"=== [Sent] {message.decode('utf-8')}")
+                    await asyncio.sleep(0.1)  # 100ms interval
             except asyncio.CancelledError:
-                print("=== メッセージ送信を停止しました")
+                print("=== Stopped sending messages")
                 raise
 
         def on_connection(connection):
-            """接続時のコールバック"""
+            """Connection callback"""
             nonlocal send_task
-            print(f"=== クライアント接続: {connection}")
-            # メッセージ送信タスクを開始
+            print(f"=== Client connected: {connection}")
+            # Also listen on the connection object to ensure cleanup fires
+            connection.on("disconnection", on_disconnection)
+            # Start message sending task
             send_task = asyncio.create_task(send_messages_periodically())
 
         def on_disconnection(connection):
-            """切断時のコールバック"""
+            """Disconnection callback"""
             nonlocal send_task
-            print(f"=== クライアント切断: {connection}")
-            # メッセージ送信タスクをキャンセル
+            print(f"=== Client disconnected: {connection}")
+            # Cancel message sending task
             if send_task and not send_task.done():
                 send_task.cancel()
             send_task = None
 
-        # イベントハンドラーを登録
+        # Register event handlers
         device.on("connection", on_connection)
         device.on("disconnection", on_disconnection)
 
-        # --- サーバー起動 ---
-
-        print(f"=== サーバー起動: {device.name}")
+        # Start server
+        print(f"=== Server started: {device.name}")
         await device.power_on()
 
-        # アドバタイズデータ（スキャンした時に見える情報）を明示的に作成
-        # 0x09 = Complete Local Name
+        # Explicitly create advertising data (information visible when scanned)
         advertising_data = AdvertisingData(
             [(AdvertisingData.COMPLETE_LOCAL_NAME, bytes(target_name, "utf-8"))]
         )
 
-        # アドバタイズデータ（スキャンした時に見える情報）を明示的に作成
+        # Explicitly create advertising data (information visible when scanned)
         await device.start_advertising(
             advertising_data=bytes(advertising_data), auto_restart=True
         )
 
-        print("=== アドバタイズ中... ブラウザから接続してください")
+        print("=== Advertising... Please connect from the browser")
 
-        # サーバーを維持し続ける
+        # Keep the server running
         await asyncio.get_running_loop().create_future()
 
 
